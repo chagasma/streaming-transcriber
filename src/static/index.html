@@ -1,34 +1,130 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Deepgram Test</title>
+    <title>Real-time Transcription Test</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        button { padding: 10px 20px; margin: 10px; font-size: 16px; }
-        #status { margin: 20px 0; font-weight: bold; }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .start-btn {
+            background: #28a745;
+            color: white;
+        }
+        .start-btn:hover:not(:disabled) {
+            background: #218838;
+        }
+        .stop-btn {
+            background: #dc3545;
+            color: white;
+        }
+        .stop-btn:hover:not(:disabled) {
+            background: #c82333;
+        }
+        .strategy-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        select {
+            padding: 8px 12px;
+            font-size: 14px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: white;
+        }
+        #status {
+            margin: 20px 0;
+            font-weight: bold;
+            padding: 10px;
+            border-radius: 5px;
+            background: #e9ecef;
+        }
         #transcription {
-            border: 1px solid #ccc;
+            border: 1px solid #ddd;
             padding: 15px;
             margin: 20px 0;
             height: 300px;
             overflow-y: auto;
-            background: #f9f9f9;
+            background: #f8f9fa;
+            border-radius: 5px;
         }
-        .final { color: black; font-weight: bold; }
-        .interim { color: gray; font-style: italic; }
+        .final {
+            color: #333;
+            font-weight: 500;
+            margin-bottom: 8px;
+            line-height: 1.4;
+        }
+        .interim {
+            color: #666;
+            font-style: italic;
+        }
+        .strategy-badge {
+            background: #007bff;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .connected { color: #28a745; }
+        .disconnected { color: #dc3545; }
+        .recording { color: #ff6b35; }
+        .stopped { color: #6c757d; }
     </style>
 </head>
 <body>
-    <h1>🎤 Teste Deepgram Real-time</h1>
+    <div class="container">
+        <h1>🎤 Teste Transcrição em Tempo Real</h1>
 
-    <button id="startBtn">🔴 Iniciar Gravação</button>
-    <button id="stopBtn" disabled>⏹️ Parar Gravação</button>
+        <div class="controls">
+            <button id="startBtn" class="start-btn">🔴 Iniciar Gravação</button>
+            <button id="stopBtn" class="stop-btn" disabled>⏹️ Parar Gravação</button>
 
-    <div id="status">Status: Desconectado</div>
+            <div class="strategy-selector">
+                <label for="strategySelect">Modelo:</label>
+                <select id="strategySelect">
+                    <option value="deepgram">Deepgram</option>
+                    <option value="gemini">Gemini Live API</option>
+                </select>
+                <span id="currentStrategy" class="strategy-badge">deepgram</span>
+            </div>
+        </div>
 
-    <div id="transcription">
-        <p><em>Transcrições aparecerão aqui...</em></p>
+        <div id="status">Status: <span class="disconnected">❌ Desconectado</span></div>
+
+        <div id="transcription">
+            <p><em>Transcrições aparecerão aqui...</em></p>
+        </div>
     </div>
 
     <script>
@@ -37,25 +133,30 @@
         const stopBtn = document.getElementById('stopBtn');
         const statusDiv = document.getElementById('status');
         const transcriptionDiv = document.getElementById('transcription');
+        const strategySelect = document.getElementById('strategySelect');
+        const currentStrategyBadge = document.getElementById('currentStrategy');
 
         let mediaRecorder;
         let audioStream;
+        let currentStrategy = 'deepgram';
 
         // WebSocket events
         socket.on('connect', () => {
-            statusDiv.innerHTML = 'Status: <span style="color: green;">✅ Conectado</span>';
+            statusDiv.innerHTML = 'Status: <span class="connected">✅ Conectado</span>';
         });
 
         socket.on('disconnect', () => {
-            statusDiv.innerHTML = 'Status: <span style="color: red;">❌ Desconectado</span>';
+            statusDiv.innerHTML = 'Status: <span class="disconnected">❌ Desconectado</span>';
         });
 
         socket.on('transcription', (data) => {
             console.log('Received:', data);
 
-            // Remove interim anterior
-            const interims = document.querySelectorAll('.interim');
-            interims.forEach(el => el.remove());
+            // Remove interim anterior apenas se não for final
+            if (!data.is_final) {
+                const interims = document.querySelectorAll('.interim');
+                interims.forEach(el => el.remove());
+            }
 
             // Adiciona novo texto
             const p = document.createElement('p');
@@ -63,15 +164,35 @@
             p.textContent = data.text;
 
             transcriptionDiv.appendChild(p);
-
-            // Auto scroll para baixo
             transcriptionDiv.scrollTop = transcriptionDiv.scrollHeight;
         });
 
-        // Buttons
+        socket.on('strategy_changed', (data) => {
+            currentStrategy = data.strategy;
+            currentStrategyBadge.textContent = data.strategy;
+            console.log(data.message);
+
+            // Atualiza o select se diferente
+            if (strategySelect.value !== data.strategy) {
+                strategySelect.value = data.strategy;
+            }
+        });
+
+        socket.on('error', (data) => {
+            alert('Erro: ' + data.message);
+        });
+
+        // Strategy selector
+        strategySelect.addEventListener('change', (e) => {
+            const newStrategy = e.target.value;
+            if (newStrategy !== currentStrategy) {
+                socket.emit('switch_strategy', { strategy: newStrategy });
+            }
+        });
+
+        // Start recording
         startBtn.addEventListener('click', async () => {
             try {
-                // Solicita acesso ao microfone
                 audioStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
                         sampleRate: 16000,
@@ -81,14 +202,12 @@
                     }
                 });
 
-                // Configura o MediaRecorder para capturar áudio
                 mediaRecorder = new MediaRecorder(audioStream, {
                     mimeType: 'audio/webm;codecs=opus'
                 });
 
                 mediaRecorder.ondataavailable = (event) => {
                     if (event.data.size > 0 && socket.connected) {
-                        // Converte blob para arraybuffer e envia
                         event.data.arrayBuffer().then(buffer => {
                             socket.emit('audio_data', buffer);
                         });
@@ -101,11 +220,11 @@
                 if (response.ok) {
                     startBtn.disabled = true;
                     stopBtn.disabled = false;
-                    statusDiv.innerHTML = 'Status: <span style="color: red;">🔴 Gravando...</span>';
+                    strategySelect.disabled = true; // Bloqueia troca durante gravação
+                    statusDiv.innerHTML = `Status: <span class="recording">🔴 Gravando com ${currentStrategy}...</span>`;
                     transcriptionDiv.innerHTML = '<p><em>Fale alguma coisa...</em></p>';
 
-                    // Inicia a gravação em chunks pequenos
-                    mediaRecorder.start(100);
+                    mediaRecorder.start(100); // 100ms chunks
                 } else {
                     alert('Erro: ' + result.error);
                     if (audioStream) {
@@ -117,6 +236,7 @@
             }
         });
 
+        // Stop recording
         stopBtn.addEventListener('click', async () => {
             try {
                 const response = await fetch('/stop_recording', { method: 'POST' });
@@ -125,9 +245,9 @@
                 if (response.ok) {
                     startBtn.disabled = false;
                     stopBtn.disabled = true;
-                    statusDiv.innerHTML = 'Status: <span style="color: gray;">⏹️ Parado</span>';
+                    strategySelect.disabled = false; // Permite troca novamente
+                    statusDiv.innerHTML = 'Status: <span class="stopped">⏹️ Parado</span>';
 
-                    // Para a gravação e libera o microfone
                     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                         mediaRecorder.stop();
                     }
@@ -141,29 +261,6 @@
                 alert('Erro: ' + error.message);
             }
         });
-
-        // Status check
-        async function checkStatus() {
-            try {
-                const response = await fetch('/status');
-                const result = await response.json();
-
-                if (result.recording) {
-                    startBtn.disabled = true;
-                    stopBtn.disabled = false;
-                    statusDiv.innerHTML = 'Status: <span style="color: red;">🔴 Gravando...</span>';
-                } else {
-                    startBtn.disabled = false;
-                    stopBtn.disabled = true;
-                    statusDiv.innerHTML = 'Status: <span style="color: gray;">⏹️ Parado</span>';
-                }
-            } catch (error) {
-                console.error('Status check failed:', error);
-            }
-        }
-
-        // Check status on load
-        checkStatus();
     </script>
 </body>
 </html>

@@ -5,3 +5,4 @@ numpy
 sounddevice
 load_dotenv
 flask-cors
+google-genai
