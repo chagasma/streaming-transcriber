@@ -1,0 +1,7 @@
+flask
+deepgram-sdk
+flask-socketio
+numpy
+sounddevice
+load_dotenv
+flask-cors

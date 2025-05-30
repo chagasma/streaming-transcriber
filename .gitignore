@@ -1,0 +1,46 @@
+# Virtual environment directories
+/venv
+/env
+/myenv
+
+# Byte-compiled / cache files
+__pycache__/
+/*.py[cod]
+*.pyc
+
+# .python-version
+.python-version
+
+# Environment variables file
+.env
+
+# Pycharm
+/.idea
+
+# VS Code
+/.vs
+
+# -----------------------
+#   Terraform
+# -----------------------
+
+# Arquivos de planos
+*.tfplan
+
+# Pastas e arquivos temporários
+.terraform/
+.terraform.lock.hcl
+/terraform/terraform.tfstate.backup
+
+# Variáveis e credenciais
+*.tfvars
+*.auto.tfvars
+
+# Logs de erro
+crash.log
+
+# deployments (goya: "too big they won't let it cook")
+/terraform/environments/dev/deployments/
+/terraform/environments/prod/deployments/
+
+node_modules

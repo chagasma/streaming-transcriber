@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Deepgram Test</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        button { padding: 10px 20px; margin: 10px; font-size: 16px; }
+        #status { margin: 20px 0; font-weight: bold; }
+        #transcription {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin: 20px 0;
+            height: 300px;
+            overflow-y: auto;
+            background: #f9f9f9;
+        }
+        .final { color: black; font-weight: bold; }
+        .interim { color: gray; font-style: italic; }
+    </style>
+</head>
+<body>
+    <h1>🎤 Teste Deepgram Real-time</h1>
+
+    <button id="startBtn">🔴 Iniciar Gravação</button>
+    <button id="stopBtn" disabled>⏹️ Parar Gravação</button>
+
+    <div id="status">Status: Desconectado</div>
+
+    <div id="transcription">
+        <p><em>Transcrições aparecerão aqui...</em></p>
+    </div>
+
+    <script>
+        const socket = io();
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusDiv = document.getElementById('status');
+        const transcriptionDiv = document.getElementById('transcription');
+
+        let mediaRecorder;
+        let audioStream;
+
+        // WebSocket events
+        socket.on('connect', () => {
+            statusDiv.innerHTML = 'Status: <span style="color: green;">✅ Conectado</span>';
+        });
+
+        socket.on('disconnect', () => {
+            statusDiv.innerHTML = 'Status: <span style="color: red;">❌ Desconectado</span>';
+        });
+
+        socket.on('transcription', (data) => {
+            console.log('Received:', data);
+
+            // Remove interim anterior
+            const interims = document.querySelectorAll('.interim');
+            interims.forEach(el => el.remove());
+
+            // Adiciona novo texto
+            const p = document.createElement('p');
+            p.className = data.is_final ? 'final' : 'interim';
+            p.textContent = data.text;
+
+            transcriptionDiv.appendChild(p);
+
+            // Auto scroll para baixo
+            transcriptionDiv.scrollTop = transcriptionDiv.scrollHeight;
+        });
+
+        // Buttons
+        startBtn.addEventListener('click', async () => {
+            try {
+                // Solicita acesso ao microfone
+                audioStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    }
+                });
+
+                // Configura o MediaRecorder para capturar áudio
+                mediaRecorder = new MediaRecorder(audioStream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0 && socket.connected) {
+                        // Converte blob para arraybuffer e envia
+                        event.data.arrayBuffer().then(buffer => {
+                            socket.emit('audio_data', buffer);
+                        });
+                    }
+                };
+
+                const response = await fetch('/start_recording', { method: 'POST' });
+                const result = await response.json();
+
+                if (response.ok) {
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    statusDiv.innerHTML = 'Status: <span style="color: red;">🔴 Gravando...</span>';
+                    transcriptionDiv.innerHTML = '<p><em>Fale alguma coisa...</em></p>';
+
+                    // Inicia a gravação em chunks pequenos
+                    mediaRecorder.start(100);
+                } else {
+                    alert('Erro: ' + result.error);
+                    if (audioStream) {
+                        audioStream.getTracks().forEach(track => track.stop());
+                    }
+                }
+            } catch (error) {
+                alert('Erro ao acessar microfone: ' + error.message);
+            }
+        });
+
+        stopBtn.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/stop_recording', { method: 'POST' });
+                const result = await response.json();
+
+                if (response.ok) {
+                    startBtn.disabled = false;
+                    stopBtn.disabled = true;
+                    statusDiv.innerHTML = 'Status: <span style="color: gray;">⏹️ Parado</span>';
+
+                    // Para a gravação e libera o microfone
+                    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                        mediaRecorder.stop();
+                    }
+                    if (audioStream) {
+                        audioStream.getTracks().forEach(track => track.stop());
+                    }
+                } else {
+                    alert('Erro: ' + result.error);
+                }
+            } catch (error) {
+                alert('Erro: ' + error.message);
+            }
+        });
+
+        // Status check
+        async function checkStatus() {
+            try {
+                const response = await fetch('/status');
+                const result = await response.json();
+
+                if (result.recording) {
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    statusDiv.innerHTML = 'Status: <span style="color: red;">🔴 Gravando...</span>';
+                } else {
+                    startBtn.disabled = false;
+                    stopBtn.disabled = true;
+                    statusDiv.innerHTML = 'Status: <span style="color: gray;">⏹️ Parado</span>';
+                }
+            } catch (error) {
+                console.error('Status check failed:', error);
+            }
+        }
+
+        // Check status on load
+        checkStatus();
+    </script>
+</body>
+</html>
