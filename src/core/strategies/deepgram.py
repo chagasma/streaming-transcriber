@@ -1,8 +1,8 @@
-import os
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
 from flask_socketio import SocketIO
 
-from strategies.transcription_strategy import TranscriptionStrategy
+from src.config.settings import Config
+from src.core.strategies.base import TranscriptionStrategy
 
 
 class DeepgramStrategy(TranscriptionStrategy):
@@ -10,7 +10,7 @@ class DeepgramStrategy(TranscriptionStrategy):
         self.socketio = socketio
         self.dg_connection = None
         self.recording = False
-        self.deepgram = DeepgramClient(os.getenv('DEEPGRAM_API_KEY'))
+        self.deepgram = DeepgramClient(Config.DEEPGRAM_API_KEY)
 
     def on_message(self, client, result, **kwargs):
         sentence = result.channel.alternatives[0].transcript
@@ -29,8 +29,8 @@ class DeepgramStrategy(TranscriptionStrategy):
 
     def start(self):
         options = LiveOptions(
-            model="nova-2",
-            language="pt-BR",
+            model=Config.DEFAULT_MODEL,
+            language=Config.DEFAULT_LANGUAGE,
             smart_format=True,
             interim_results=True
         )
