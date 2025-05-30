@@ -6,7 +6,7 @@ from src.core.context import TranscriptionContext
 def register_routes(app, transcription_context: TranscriptionContext):
     @app.route('/')
     def serve_html():
-        return send_file('../static/index.html')
+        return send_file('static/index.html')
 
     @app.route('/start_recording', methods=['POST'])
     def start_recording():
