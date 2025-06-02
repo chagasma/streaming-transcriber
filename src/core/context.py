@@ -1,4 +1,4 @@
-from core.strategies.base import TranscriptionStrategy
+from src.core.strategies.base import TranscriptionStrategy
 
 
 class TranscriptionContext:
