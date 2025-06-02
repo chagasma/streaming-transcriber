@@ -15,11 +15,11 @@ class GeminiStrategy(TranscriptionStrategy):
         self.recording = False
         self.client = genai.Client(
             api_key=Config.GEMINI_API_KEY,
-            vertexai=True,
-            project=Config.GOOGLE_CLOUD_PROJECT,
-            location=Config.GOOGLE_CLOUD_LOCATION
+            # vertexai=True,
+            # project=Config.GOOGLE_CLOUD_PROJECT,
+            # location=Config.GOOGLE_CLOUD_LOCATION
         )
-        self.model = "gemini-2.0-flash-live-preview-04-09"
+        self.model = "gemini-2.0-flash-live-001"
         self.loop = None
         self.thread = None
         self.audio_buffer = []
