@@ -44,3 +44,4 @@ crash.log
 /terraform/environments/prod/deployments/
 
 node_modules
+/gen-lang-client-0325667393-4cba9a6ef1de.json
