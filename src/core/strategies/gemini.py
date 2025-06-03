@@ -23,25 +23,25 @@ class GeminiStrategy(TranscriptionStrategy):
 
     async def _async_start(self):
         try:
-            # Configuração com system instruction para português
-            config = {
-                "response_modalities": ["TEXT"],
-                "input_audio_transcription": {},  # Habilita transcrição de entrada
-                "system_instruction": {
-                    "parts": [
-                        {
-                            "text": "Você é um assistente de transcrição. Transcreva exatamente o que o usuário falar em português, retornando apenas o texto transcrito sem comentários adicionais."
-                        }
-                    ]
-                },
-                "generation_config": {
-                    "temperature": 0.1,
-                    "candidate_count": 1
-                }
-            }
+            # Configuração otimizada para transcrição usando tipos apropriados
+            config = types.LiveConnectConfig(
+                response_modalities=["TEXT"],
+                input_audio_transcription={},  # Habilita transcrição automática
+                realtime_input_config=types.RealtimeInputConfig(
+                    automatic_activity_detection=types.AutomaticActivityDetection(
+                        disabled=False,  # Usar VAD automático
+                        end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
+                        silence_duration_ms=800  # Aguardar um pouco mais antes de finalizar
+                    )
+                ),
+                generation_config=types.GenerationConfig(
+                    temperature=0.0,  # Determinístico para transcrição
+                    candidate_count=1
+                )
+            )
 
             print(f"🔧 Iniciando conexão com modelo: {self.model}")
-            print(f"🔧 Configuração: {json.dumps(config, indent=2)}")
+            print(f"🔧 Configuração: input_audio_transcription habilitado, temperature=0.0")
 
             async with self.client.aio.live.connect(model=self.model, config=config) as session:
                 self.session = session
@@ -55,13 +55,6 @@ class GeminiStrategy(TranscriptionStrategy):
                         await self._send_audio_async(audio_data)
                     self.audio_buffer = []
 
-                # Teste inicial para verificar conectividade
-                print("🧪 Enviando mensagem de teste para verificar conectividade...")
-                await session.send_client_content(
-                    turns={"role": "user", "parts": [{"text": "teste"}]},
-                    turn_complete=True
-                )
-
                 print("🔄 Iniciando loop de recebimento de mensagens...")
 
                 # Loop principal de recebimento de mensagens
@@ -73,7 +66,7 @@ class GeminiStrategy(TranscriptionStrategy):
                             break
 
                         message_count += 1
-                        print(f"📨 Mensagem #{message_count} recebida: {type(message).__name__}")
+                        print(f"📨 Mensagem #{message_count} recebida")
                         await self._process_message(message)
 
                         # Log periódico para mostrar que está ativo
@@ -81,14 +74,20 @@ class GeminiStrategy(TranscriptionStrategy):
                             print(f"📊 Processadas {message_count} mensagens até agora")
 
                 except Exception as receive_error:
-                    print(f"❌ Erro no loop de recebimento: {receive_error}")
-                    import traceback
-                    print(f"🔍 Traceback do loop: {traceback.format_exc()}")
+                    if "ConnectionClosed" not in str(receive_error):
+                        print(f"❌ Erro no loop de recebimento: {receive_error}")
+                        import traceback
+                        print(f"🔍 Traceback do loop: {traceback.format_exc()}")
+                    else:
+                        print("🔌 Conexão WebSocket fechada pelo servidor")
 
         except Exception as e:
-            print(f"❌ Erro na sessão Gemini: {e}")
-            import traceback
-            print(f"🔍 Traceback completo: {traceback.format_exc()}")
+            if "ConnectionClosed" not in str(e):
+                print(f"❌ Erro na sessão Gemini: {e}")
+                import traceback
+                print(f"🔍 Traceback completo: {traceback.format_exc()}")
+            else:
+                print("🔌 Sessão Gemini encerrada pelo servidor")
             self.recording = False
         finally:
             self.session = None
@@ -101,59 +100,30 @@ class GeminiStrategy(TranscriptionStrategy):
 
             print(f"🔍 Processando mensagem do tipo: {type(message).__name__}")
 
-            # Debug completo da estrutura da mensagem
-            if hasattr(message, '__dict__'):
-                attrs = [attr for attr in message.__dict__.keys() if not attr.startswith('_')]
-                print(f"📋 Atributos disponíveis: {attrs}")
-
-                # Log valores dos atributos principais para debug
-                for attr in ['server_content', 'text', 'data']:
-                    if hasattr(message, attr):
-                        value = getattr(message, attr)
-                        if value:
-                            print(f"🔍 {attr}: {type(value).__name__} = {str(value)[:200]}...")
-
             # Verificar server_content (padrão do Live API)
             if hasattr(message, 'server_content') and message.server_content:
                 server_content = message.server_content
                 print(f"✅ server_content encontrado: {type(server_content).__name__}")
 
-                # Debug atributos do server_content
-                if hasattr(server_content, '__dict__'):
-                    sc_attrs = [attr for attr in server_content.__dict__.keys() if not attr.startswith('_')]
-                    print(f"📋 server_content atributos: {sc_attrs}")
-
-                # Input transcription (transcrição do que o usuário falou)
+                # FOCO: Input transcription (transcrição do que o usuário falou)
                 if hasattr(server_content, 'input_transcription') and server_content.input_transcription:
-                    if hasattr(server_content.input_transcription, 'text'):
-                        text = server_content.input_transcription.text
-                        print(f"🎤 INPUT transcription: {text}")
-                        self._emit_transcription(text, True)
-                        transcription_found = True
+                    if hasattr(server_content.input_transcription, 'text') and server_content.input_transcription.text:
+                        text = server_content.input_transcription.text.strip()
+                        if text:  # Só processa se não for vazio
+                            print(f"🎤 INPUT transcription: '{text}'")
+                            self._emit_transcription(text, True)
+                            transcription_found = True
+                    else:
+                        print(f"🔍 input_transcription existe mas sem texto válido")
+                else:
+                    print(f"🔍 input_transcription: None ou vazio")
 
-                # Model turn (resposta do modelo em texto)
+                # Log apenas para debug - não usar model_turn para transcrição
                 if hasattr(server_content, 'model_turn') and server_content.model_turn:
-                    model_turn = server_content.model_turn
-                    print(f"🤖 Model turn encontrado: {type(model_turn).__name__}")
-
-                    if hasattr(model_turn, 'parts') and model_turn.parts:
-                        print(f"🔍 Model turn tem {len(model_turn.parts)} parts")
-                        for i, part in enumerate(model_turn.parts):
-                            print(f"🔍 Part {i}: {type(part).__name__}")
-                            if hasattr(part, 'text') and part.text:
-                                text = part.text
-                                print(f"🤖 Model response: {text}")
-                                self._emit_transcription(text, True)
-                                transcription_found = True
-
-            # Verificar transcrição direta na mensagem
-            if hasattr(message, 'text') and message.text:
-                print(f"📝 Direct text: {message.text}")
-                self._emit_transcription(message.text, True)
-                transcription_found = True
+                    print(f"🤖 Model turn ignorado (não é transcrição): {type(server_content.model_turn).__name__}")
 
             if not transcription_found:
-                print(f"⚠️  Nenhuma transcrição encontrada na mensagem")
+                print(f"⚠️  Nenhuma transcrição de input encontrada")
 
         except Exception as e:
             print(f"❌ Erro ao processar mensagem: {e}")
@@ -187,9 +157,9 @@ class GeminiStrategy(TranscriptionStrategy):
 
                 # Log apenas primeiros chunks para evitar spam
                 if len(self.audio_buffer) < 3:
-                    print(f"📤 Enviando áudio: {len(audio_bytes)} bytes para sessão ativa")
+                    print(f"📤 Enviando áudio: {len(audio_bytes)} bytes (VAD automático ativo)")
 
-                # Método correto baseado na documentação oficial
+                # Método correto com VAD automático
                 await self.session.send_realtime_input(
                     audio=types.Blob(
                         data=audio_bytes,
@@ -197,14 +167,15 @@ class GeminiStrategy(TranscriptionStrategy):
                     )
                 )
 
-                # Confirmar que enviou
-                if len(self.audio_buffer) < 3:
-                    print(f"✅ Áudio enviado com sucesso")
-
         except Exception as e:
-            print(f"❌ Erro ao enviar áudio: {e}")
-            import traceback
-            print(f"🔍 Traceback envio: {traceback.format_exc()}")
+            # Se for erro de conexão, só marcar sessão como None
+            if "ConnectionClosed" in str(e):
+                print(f"🔌 Conexão fechada durante envio de áudio")
+                self.session = None
+            else:
+                print(f"❌ Erro ao enviar áudio: {e}")
+                import traceback
+                print(f"🔍 Traceback envio: {traceback.format_exc()}")
 
     def _run_async_loop(self):
         """Executa o loop assíncrono em thread separada"""
