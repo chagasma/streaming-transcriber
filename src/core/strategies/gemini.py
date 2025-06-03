@@ -3,7 +3,7 @@ import threading
 import json
 
 from google import genai
-from google.genai.types import Part
+from google.genai import types
 from flask_socketio import SocketIO
 
 from src.config.settings import Config
@@ -23,11 +23,17 @@ class GeminiStrategy(TranscriptionStrategy):
 
     async def _async_start(self):
         try:
-            # Configuração correta baseada na documentação oficial do Vertex AI
+            # Configuração com system instruction para português
             config = {
                 "response_modalities": ["TEXT"],
-                "input_audio_transcription": {},  # Objeto vazio habilita transcrição de entrada
-                "output_audio_transcription": {},  # Objeto vazio habilita transcrição de saída
+                "input_audio_transcription": {},  # Habilita transcrição de entrada
+                "system_instruction": {
+                    "parts": [
+                        {
+                            "text": "Você é um assistente de transcrição. Transcreva exatamente o que o usuário falar em português, retornando apenas o texto transcrito sem comentários adicionais."
+                        }
+                    ]
+                },
                 "generation_config": {
                     "temperature": 0.1,
                     "candidate_count": 1
@@ -49,18 +55,30 @@ class GeminiStrategy(TranscriptionStrategy):
                         await self._send_audio_async(audio_data)
                     self.audio_buffer = []
 
-                # Adicionar timeout para debug
+                # Teste inicial para verificar conectividade
+                print("🧪 Enviando mensagem de teste para verificar conectividade...")
+                await session.send_client_content(
+                    turns={"role": "user", "parts": [{"text": "teste"}]},
+                    turn_complete=True
+                )
+
                 print("🔄 Iniciando loop de recebimento de mensagens...")
 
                 # Loop principal de recebimento de mensagens
                 try:
+                    message_count = 0
                     async for message in session.receive():
                         if not self.recording:
                             print("🛑 Parando recebimento - recording=False")
                             break
 
-                        print(f"📨 Mensagem recebida: {type(message).__name__}")
+                        message_count += 1
+                        print(f"📨 Mensagem #{message_count} recebida: {type(message).__name__}")
                         await self._process_message(message)
+
+                        # Log periódico para mostrar que está ativo
+                        if message_count % 10 == 0:
+                            print(f"📊 Processadas {message_count} mensagens até agora")
 
                 except Exception as receive_error:
                     print(f"❌ Erro no loop de recebimento: {receive_error}")
@@ -77,22 +95,33 @@ class GeminiStrategy(TranscriptionStrategy):
             print("🔌 Sessão Gemini finalizada")
 
     async def _process_message(self, message):
-        """Processa mensagens recebidas do Gemini de forma mais robusta"""
+        """Processa mensagens recebidas do Gemini"""
         try:
             transcription_found = False
 
-            # Log detalhado da mensagem para debug
             print(f"🔍 Processando mensagem do tipo: {type(message).__name__}")
 
-            # Verificar todos os atributos da mensagem
+            # Debug completo da estrutura da mensagem
             if hasattr(message, '__dict__'):
-                attrs = list(message.__dict__.keys())
+                attrs = [attr for attr in message.__dict__.keys() if not attr.startswith('_')]
                 print(f"📋 Atributos disponíveis: {attrs}")
 
-            # Método 1: Verificar server_content (padrão do Live API)
+                # Log valores dos atributos principais para debug
+                for attr in ['server_content', 'text', 'data']:
+                    if hasattr(message, attr):
+                        value = getattr(message, attr)
+                        if value:
+                            print(f"🔍 {attr}: {type(value).__name__} = {str(value)[:200]}...")
+
+            # Verificar server_content (padrão do Live API)
             if hasattr(message, 'server_content') and message.server_content:
                 server_content = message.server_content
                 print(f"✅ server_content encontrado: {type(server_content).__name__}")
+
+                # Debug atributos do server_content
+                if hasattr(server_content, '__dict__'):
+                    sc_attrs = [attr for attr in server_content.__dict__.keys() if not attr.startswith('_')]
+                    print(f"📋 server_content atributos: {sc_attrs}")
 
                 # Input transcription (transcrição do que o usuário falou)
                 if hasattr(server_content, 'input_transcription') and server_content.input_transcription:
@@ -102,58 +131,29 @@ class GeminiStrategy(TranscriptionStrategy):
                         self._emit_transcription(text, True)
                         transcription_found = True
 
-                # Output transcription (transcrição do que o modelo falou)
-                if hasattr(server_content, 'output_transcription') and server_content.output_transcription:
-                    if hasattr(server_content.output_transcription, 'text'):
-                        text = server_content.output_transcription.text
-                        print(f"🔊 OUTPUT transcription: {text}")
-                        self._emit_transcription(text, True)
-                        transcription_found = True
-
                 # Model turn (resposta do modelo em texto)
                 if hasattr(server_content, 'model_turn') and server_content.model_turn:
                     model_turn = server_content.model_turn
+                    print(f"🤖 Model turn encontrado: {type(model_turn).__name__}")
+
                     if hasattr(model_turn, 'parts') and model_turn.parts:
-                        for part in model_turn.parts:
+                        print(f"🔍 Model turn tem {len(model_turn.parts)} parts")
+                        for i, part in enumerate(model_turn.parts):
+                            print(f"🔍 Part {i}: {type(part).__name__}")
                             if hasattr(part, 'text') and part.text:
                                 text = part.text
                                 print(f"🤖 Model response: {text}")
                                 self._emit_transcription(text, True)
                                 transcription_found = True
 
-            # Método 2: Verificar diretamente na raiz da mensagem
-            direct_attrs = ['input_transcription', 'output_transcription', 'transcription', 'text']
-            for attr in direct_attrs:
-                if hasattr(message, attr):
-                    value = getattr(message, attr)
-                    if value:
-                        print(f"🎯 Encontrado {attr}: {value}")
-                        if hasattr(value, 'text'):
-                            text = value.text
-                            print(f"📝 Transcription: {text}")
-                            self._emit_transcription(text, True)
-                            transcription_found = True
-                        elif isinstance(value, str):
-                            print(f"📝 Direct text: {value}")
-                            self._emit_transcription(value, True)
-                            transcription_found = True
+            # Verificar transcrição direta na mensagem
+            if hasattr(message, 'text') and message.text:
+                print(f"📝 Direct text: {message.text}")
+                self._emit_transcription(message.text, True)
+                transcription_found = True
 
-            # Se não encontrou transcrição, fazer log completo para debug
             if not transcription_found:
                 print(f"⚠️  Nenhuma transcrição encontrada na mensagem")
-                if hasattr(message, '__dict__'):
-                    # Fazer dump completo para entender a estrutura
-                    try:
-                        import json
-                        message_dict = {}
-                        for key, value in message.__dict__.items():
-                            try:
-                                message_dict[key] = str(value)[:500]  # Limitar tamanho
-                            except:
-                                message_dict[key] = f"<{type(value).__name__}>"
-                        print(f"📋 Estrutura completa da mensagem: {json.dumps(message_dict, indent=2)}")
-                    except Exception as dump_error:
-                        print(f"❌ Erro ao fazer dump da mensagem: {dump_error}")
 
         except Exception as e:
             print(f"❌ Erro ao processar mensagem: {e}")
@@ -173,7 +173,7 @@ class GeminiStrategy(TranscriptionStrategy):
             print(f"❌ Erro ao emitir transcrição: {e}")
 
     async def _send_audio_async(self, audio_data):
-        """Envia áudio de forma assíncrona"""
+        """Envia áudio de forma assíncrona usando send_realtime_input"""
         try:
             if self.session:
                 # Converter para bytes se necessário
@@ -185,16 +185,21 @@ class GeminiStrategy(TranscriptionStrategy):
                     print(f"⚠️  Tipo de áudio não reconhecido: {type(audio_data)}")
                     return
 
-                # Log do tamanho do chunk (só primeiros chunks para não poluir)
-                if len(self.audio_buffer) < 5:
-                    print(f"📤 Enviando áudio: {len(audio_bytes)} bytes (primeiro chunks)")
+                # Log apenas primeiros chunks para evitar spam
+                if len(self.audio_buffer) < 3:
+                    print(f"📤 Enviando áudio: {len(audio_bytes)} bytes para sessão ativa")
 
-                # Sintaxe correta baseada na documentação oficial
-                audio_part = Part.from_bytes(
-                    data=audio_bytes,
-                    mime_type="audio/pcm;rate=16000"
+                # Método correto baseado na documentação oficial
+                await self.session.send_realtime_input(
+                    audio=types.Blob(
+                        data=audio_bytes,
+                        mime_type="audio/pcm;rate=16000"
+                    )
                 )
-                await self.session.send(audio_part)
+
+                # Confirmar que enviou
+                if len(self.audio_buffer) < 3:
+                    print(f"✅ Áudio enviado com sucesso")
 
         except Exception as e:
             print(f"❌ Erro ao enviar áudio: {e}")
@@ -221,6 +226,10 @@ class GeminiStrategy(TranscriptionStrategy):
         """Inicia a estratégia Gemini"""
         try:
             print("🚀 Iniciando GeminiStrategy...")
+            # Reset do flag de log
+            if hasattr(self, '_logged_inactive_attempt'):
+                delattr(self, '_logged_inactive_attempt')
+
             self.thread = threading.Thread(target=self._run_async_loop, daemon=True)
             self.thread.start()
             print("✅ Thread iniciada com sucesso")
@@ -232,6 +241,9 @@ class GeminiStrategy(TranscriptionStrategy):
         """Para a estratégia Gemini"""
         print("🛑 Parando GeminiStrategy...")
         self.recording = False
+        # Reset do flag de log
+        if hasattr(self, '_logged_inactive_attempt'):
+            delattr(self, '_logged_inactive_attempt')
 
     def send_audio(self, audio_data):
         """Envia dados de áudio"""
@@ -250,7 +262,9 @@ class GeminiStrategy(TranscriptionStrategy):
             # Adicionar ao buffer se ainda não conectado
             self.audio_buffer.append(audio_data)
             if len(self.audio_buffer) <= 3:  # Log apenas primeiros
-                print(f"📋 Áudio adicionado ao buffer (total: {len(self.audio_buffer)})")
+                print(f"📋 Áudio adicionado ao buffer (total: {len(self.audio_buffer)}) - aguardando conexão")
         else:
-            if len(self.audio_buffer) <= 1:  # Evitar spam
-                print("⚠️  Tentativa de envio com sessão inativa")
+            # Log apenas primeira tentativa para evitar spam
+            if not hasattr(self, '_logged_inactive_attempt'):
+                print("⚠️  Tentativa de envio com gravação inativa")
+                self._logged_inactive_attempt = True
