@@ -16,5 +16,4 @@ class Config:
     PORT = 5000
 
     DEFAULT_LANGUAGE = 'pt-BR'
-
-    DEFAULT_MODEL = 'nova-3-medical'
+    DEFAULT_MODEL = 'nova-2'
