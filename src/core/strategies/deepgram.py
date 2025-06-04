@@ -32,8 +32,12 @@ class DeepgramStrategy(TranscriptionStrategy):
         options = LiveOptions(
             model=Config.DEFAULT_MODEL,
             language=Config.DEFAULT_LANGUAGE,
+            encoding=Config.AUDIO_ENCODING,
+            endpointing=Config.ENDPOINTING_MS,
             smart_format=True,
             interim_results=True,
+            punctuate=True,
+            numerals=True
         )
 
         self.dg_connection = self.deepgram.listen.websocket.v("1")
